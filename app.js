@@ -160,37 +160,8 @@ function circlePoly(radius, segs = 48) {
     });
 }
 
-// Dog bone: a central bar with two round knobs at each end.
-const BONE_BAR_RATIO = 0.35;
-
-function boneInside(hw, hh, x, y) {
-    const r = hh / 2, cx = hw - r, cy = hh / 2, b = hh * BONE_BAR_RATIO;
-    const ax = Math.abs(x), ay = Math.abs(y);
-    if (ax <= cx && ay <= b) return true;
-    return Math.hypot(ax - cx, ay - cy) <= r;
-}
-
-function boneMaxXAt(hw, hh, y) {
-    for (let x = hw; x >= 0; x -= 0.1) {
-        if (boneInside(hw, hh, x, y)) return x;
-    }
-    return 0;
-}
-
-function shapeCS(wasm, hw, hh, cornerR, shape) {
-    if (shape !== 'bone') return new wasm.CrossSection([shapePoly(hw, hh, cornerR, shape)]);
-
-    const r = hh / 2, cx = hw - r, cy = hh / 2, b = hh * BONE_BAR_RATIO;
-    const bar = wasm.CrossSection.square([2 * cx, 2 * b], true);
-    return [[cx, cy], [-cx, cy], [cx, -cy], [-cx, -cy]].reduce(
-        (acc, [x, y]) => acc.add(wasm.CrossSection.circle(r, 64).translate([x, y])),
-        bar,
-    );
-}
-
 // Half-width of the outline at height y; used to fit holes and text inside the plate.
 function shapeMaxXAt(hw, hh, cornerR, shape, y) {
-    if (shape === 'bone') return boneMaxXAt(hw, hh, y);
     const ay = Math.abs(y);
     if (shape === 'oval') {
         if (ay >= hh) return 0;
@@ -362,11 +333,11 @@ function buildPlate(wasm, font, p) {
     const hw = width / 2, hh = height / 2;
     const innerHW = hw - borderW, innerHH = hh - borderW, innerCR = Math.max(0, cornerR - borderW);
 
-    const outerCS = shapeCS(wasm, hw, hh, cornerR, shape);
+    const outerCS = new wasm.CrossSection([shapePoly(hw, hh, cornerR, shape)]);
     let base = wasm.Manifold.extrude(outerCS, baseThk);
 
     if (borderW > 0.1 && borderH > 0.1) {
-        const innerCS = shapeCS(wasm, innerHW, innerHH, innerCR, shape);
+        const innerCS = new wasm.CrossSection([shapePoly(innerHW, innerHH, innerCR, shape)]);
         const ringCS = outerCS.subtract(innerCS);
         const ring = wasm.Manifold.extrude(ringCS, borderH).translate([0, 0, baseThk]);
         const merged = base.add(ring);
@@ -426,6 +397,7 @@ function manifoldToGeometry(manifold) {
 async function regenerate() {
     const [wasm, font] = await Promise.all([loadManifold(), loadFont(params.font)]);
     const { base, text } = buildPlate(wasm, font, params);
+    partVolumes = { base: manifoldVolume(base), text: text ? manifoldVolume(text) : 0 };
 
     baseMesh.geometry.dispose();
     baseMesh.geometry = manifoldToGeometry(base);
@@ -438,6 +410,7 @@ async function regenerate() {
         text.delete();
     }
     renderStats();
+    renderFilament();
 }
 
 let regenTimer = null;
@@ -502,7 +475,7 @@ Phone = "${p.phoneText}";
 Font = "${p.font}";
 
 /* [Shape] */
-Plate_Shape = "${p.shape}"; // [rounded-rect, rectangle, oval, stadium, bone]
+Plate_Shape = "${p.shape}"; // [rounded-rect, rectangle, oval, stadium]
 
 /* [Dimensions] */
 Width = ${p.width}; // [40:200]
@@ -529,14 +502,6 @@ module plate_shape(w, h, r) {
             sr = min(w, h);
             translate([w - sr, 0]) circle(r = sr);
             translate([-(w - sr), 0]) circle(r = sr);
-        }
-    } else if (Plate_Shape == "bone") {
-        bone_r = h / 2;
-        bone_cx = w - bone_r;
-        bone_b = h * 0.35;
-        union() {
-            square([2 * bone_cx, 2 * bone_b], center = true);
-            for (sx = [-1, 1], sy = [-1, 1]) translate([sx * bone_cx, sy * h / 2]) circle(r = bone_r);
         }
     } else if (Plate_Shape == "rectangle" || r < 0.1) {
         square([w * 2, h * 2], center = true);
@@ -597,6 +562,58 @@ name_plate();
 `;
 }
 
+// ===== Filament estimate =====
+const PLA_DENSITY_G_CM3 = 1.24;
+const FILAMENT_DIAMETER_MM = 1.75;
+const FILAMENT_AREA_MM2 = Math.PI * (FILAMENT_DIAMETER_MM / 2) ** 2;
+
+let partVolumes = { base: 0, text: 0 };
+
+// Signed tetrahedron sum over the closed mesh (divergence theorem), in mm³.
+function manifoldVolume(manifold) {
+    const mesh = manifold.getMesh();
+    const { numProp, vertProperties, triVerts } = mesh;
+    const vertex = v => [vertProperties[v * numProp], vertProperties[v * numProp + 1], vertProperties[v * numProp + 2]];
+
+    let volume = 0;
+    for (let t = 0; t < triVerts.length; t += 3) {
+        const [ax, ay, az] = vertex(triVerts[t]);
+        const [bx, by, bz] = vertex(triVerts[t + 1]);
+        const [cx, cy, cz] = vertex(triVerts[t + 2]);
+        volume += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+    }
+    mesh.delete?.();
+    return Math.abs(volume) / 6;
+}
+
+// Solid volume only: real usage is lower with infill, so this is an upper bound.
+function renderFilament() {
+    const rows = [
+        ['Base', plateMaterials.base.color, partVolumes.base],
+        ['Text', plateMaterials.text.color, partVolumes.text],
+    ];
+    document.getElementById('filamentRows').replaceChildren(...rows.map(([label, color, mm3]) => {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between';
+
+        const name = document.createElement('span');
+        name.className = 'flex items-center gap-2';
+        const swatch = document.createElement('span');
+        swatch.className = 'inline-block h-3 w-3 rounded-full border border-slate-300';
+        swatch.style.background = `#${color.getHexString()}`;
+        name.append(swatch, `${label} #${color.getHexString()}`);
+
+        const grams = (mm3 / 1000) * PLA_DENSITY_G_CM3;
+        const meters = mm3 / FILAMENT_AREA_MM2 / 1000;
+        const amount = document.createElement('span');
+        amount.className = 'font-semibold text-blue-600';
+        amount.textContent = `${grams.toFixed(1)} g · ${meters.toFixed(2)} m`;
+
+        row.append(name, amount);
+        return row;
+    }));
+}
+
 // ===== UI =====
 const controlEls = document.querySelectorAll('[data-param]');
 const outputEls = document.querySelectorAll('[data-out]');
@@ -644,6 +661,7 @@ function populateColorPicker() {
             plateMaterials.base.color.set(colors.base);
             plateMaterials.text.color.set(colors.text);
             picker.querySelectorAll('button').forEach((b, j) => b.classList.toggle('ring-2', i === j));
+            renderFilament();
         });
         picker.append(swatch);
     });
