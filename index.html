@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>3D Name Plate Generator</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lobster&family=Pacifico&family=Dancing+Script:wght@700&family=Playfair+Display:wght@700&family=Montserrat:wght@700&family=Poppins:wght@700&family=Oswald:wght@700&display=swap">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style type="text/tailwindcss">
+        .btn { @apply inline-flex items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50; }
+        .btn-green { @apply border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600; }
+        .btn-active { @apply border-blue-500 bg-blue-500 text-white hover:bg-blue-600; }
+        .section { @apply space-y-3 border-b border-slate-200 py-4; }
+        .section-title { @apply text-xs font-semibold uppercase tracking-wide text-slate-500; }
+        .field-label { @apply flex justify-between text-xs text-slate-600; }
+        .field-value { @apply font-semibold text-blue-600; }
+        .input { @apply w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm; }
+    </style>
+</head>
+<body class="flex h-screen flex-col overflow-hidden bg-slate-100 font-sans text-slate-700">
+    <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
+        <h1 class="text-sm font-semibold text-slate-800">3D Name Plate Generator</h1>
+        <div class="flex gap-2">
+            <button id="btnStl" class="btn btn-green"><i>↓</i> Download STL</button>
+        </div>
+    </header>
+
+    <div class="flex min-h-0 flex-1">
+        <div id="canvasArea" class="relative flex-1">
+            <canvas id="canvas" class="absolute inset-0 h-full w-full"></canvas>
+            <div id="loading" class="absolute inset-0 grid place-items-center bg-slate-100/80 text-sm">
+                <span id="loadingText">Loading 3D engine...</span>
+            </div>
+        </div>
+
+        <aside class="w-72 shrink-0 overflow-y-auto border-l border-slate-200 bg-white px-4">
+            <section class="section">
+                <div class="section-title">Style Presets</div>
+                <div class="grid grid-cols-3 gap-1.5">
+                    <button class="btn" data-preset="classic">Classic</button>
+                    <button class="btn" data-preset="badge">Badge</button>
+                    <button class="btn" data-preset="slim">Slim</button>
+                    <button class="btn" data-preset="large">Large</button>
+                    <button class="btn" data-preset="oval">Oval</button>
+                </div>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Text</div>
+                <label class="block space-y-1">
+                    <span class="field-label">Name</span>
+                    <input class="input" type="text" data-param="nameText" maxlength="30" placeholder="Enter name...">
+                </label>
+                <label class="block space-y-1">
+                    <span class="field-label">Font</span>
+                    <select class="input" data-param="font"></select>
+                </label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Shape</div>
+                <label class="block space-y-1">
+                    <span class="field-label">Plate Shape</span>
+                    <select class="input" data-param="shape">
+                        <option value="rounded-rect">Rounded Rectangle</option>
+                        <option value="rectangle">Rectangle</option>
+                        <option value="oval">Oval</option>
+                        <option value="stadium">Stadium / Pill</option>
+                    </select>
+                </label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Dimensions (mm)</div>
+                <label class="block"><span class="field-label">Width <output class="field-value" data-out="width"></output></span>
+                    <input type="range" data-param="width" min="40" max="200" step="1" class="w-full"></label>
+                <label class="block"><span class="field-label">Height <output class="field-value" data-out="height"></output></span>
+                    <input type="range" data-param="height" min="15" max="120" step="1" class="w-full"></label>
+                <label class="block"><span class="field-label">Base Thickness <output class="field-value" data-out="baseThk"></output></span>
+                    <input type="range" data-param="baseThk" min="1" max="6" step="0.1" class="w-full"></label>
+                <label class="block"><span class="field-label">Border Width <output class="field-value" data-out="borderW"></output></span>
+                    <input type="range" data-param="borderW" min="0" max="10" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Border Height <output class="field-value" data-out="borderH"></output></span>
+                    <input type="range" data-param="borderH" min="0" max="5" step="0.1" class="w-full"></label>
+                <label class="block"><span class="field-label">Corner Radius <output class="field-value" data-out="cornerR"></output></span>
+                    <input type="range" data-param="cornerR" min="0" max="30" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Text Height <output class="field-value" data-out="textH"></output></span>
+                    <input type="range" data-param="textH" min="0.4" max="5" step="0.1" class="w-full"></label>
+                <label class="block"><span class="field-label">Tolerance <output class="field-value" data-out="tolerance"></output></span>
+                    <input type="range" data-param="tolerance" min="0" max="1" step="0.05" class="w-full"></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Mounting Holes</div>
+                <label class="block space-y-1">
+                    <span class="field-label">Hole Layout</span>
+                    <select class="input" data-param="holeLayout">
+                        <option value="none">No Holes</option>
+                        <option value="top-center">One Top Center</option>
+                        <option value="top-two">Two Top Corners</option>
+                        <option value="left-right">Left &amp; Right</option>
+                    </select>
+                </label>
+                <label class="block"><span class="field-label">Hole Diameter <output class="field-value" data-out="holeD"></output></span>
+                    <input type="range" data-param="holeD" min="2" max="8" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Hole Padding <output class="field-value" data-out="holePad"></output></span>
+                    <input type="range" data-param="holePad" min="2" max="15" step="0.5" class="w-full"></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Style</div>
+                <div class="flex flex-wrap gap-2" id="colorPicker"></div>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Model Info</div>
+                <div class="flex justify-between text-xs"><span>Triangles</span><span id="statTris" class="font-semibold text-blue-600">—</span></div>
+                <div class="flex justify-between text-xs"><span>Bounding Box</span><span id="statBBox" class="font-semibold">—</span></div>
+            </section>
+
+            <section class="space-y-2 py-4">
+                <button id="btnStlSidebar" class="btn btn-green w-full">Download STL — Free</button>
+                <button id="btnParts" class="btn w-full">Download Separate Parts (ZIP)</button>
+                <button id="btnScad" class="btn w-full">Download OpenSCAD File</button>
+                <p class="text-center text-xs text-slate-500">
+                    Single STL for multi-color slicers.<br>
+                    Separate Parts ZIP for print &amp; glue assembly.
+                </p>
+            </section>
+        </aside>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
