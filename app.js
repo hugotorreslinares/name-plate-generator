@@ -6,6 +6,8 @@ import { STLExporter } from 'three/addons/exporters/STLExporter.js';
 
 const MANIFOLD_URL = 'https://cdn.jsdelivr.net/npm/manifold-3d@2.5.1';
 const BEZIER_STEPS = 16;
+// Text recess depth as a share of base thickness; the text piece sits in it and rises Text Height above the base.
+const RECESS_RATIO = 0.5;
 
 const FONTS = {
     Lobster: 'https://fonts.gstatic.com/s/lobster/v32/neILzCirqoswsqX9_oU.ttf',
@@ -158,8 +160,37 @@ function circlePoly(radius, segs = 48) {
     });
 }
 
+// Dog bone: a central bar with two round knobs at each end.
+const BONE_BAR_RATIO = 0.35;
+
+function boneInside(hw, hh, x, y) {
+    const r = hh / 2, cx = hw - r, cy = hh / 2, b = hh * BONE_BAR_RATIO;
+    const ax = Math.abs(x), ay = Math.abs(y);
+    if (ax <= cx && ay <= b) return true;
+    return Math.hypot(ax - cx, ay - cy) <= r;
+}
+
+function boneMaxXAt(hw, hh, y) {
+    for (let x = hw; x >= 0; x -= 0.1) {
+        if (boneInside(hw, hh, x, y)) return x;
+    }
+    return 0;
+}
+
+function shapeCS(wasm, hw, hh, cornerR, shape) {
+    if (shape !== 'bone') return new wasm.CrossSection([shapePoly(hw, hh, cornerR, shape)]);
+
+    const r = hh / 2, cx = hw - r, cy = hh / 2, b = hh * BONE_BAR_RATIO;
+    const bar = wasm.CrossSection.square([2 * cx, 2 * b], true);
+    return [[cx, cy], [-cx, cy], [cx, -cy], [-cx, -cy]].reduce(
+        (acc, [x, y]) => acc.add(wasm.CrossSection.circle(r, 64).translate([x, y])),
+        bar,
+    );
+}
+
 // Half-width of the outline at height y; used to fit holes and text inside the plate.
 function shapeMaxXAt(hw, hh, cornerR, shape, y) {
+    if (shape === 'bone') return boneMaxXAt(hw, hh, y);
     const ay = Math.abs(y);
     if (shape === 'oval') {
         if (ay >= hh) return 0;
@@ -331,11 +362,11 @@ function buildPlate(wasm, font, p) {
     const hw = width / 2, hh = height / 2;
     const innerHW = hw - borderW, innerHH = hh - borderW, innerCR = Math.max(0, cornerR - borderW);
 
-    const outerCS = new wasm.CrossSection([shapePoly(hw, hh, cornerR, shape)]);
+    const outerCS = shapeCS(wasm, hw, hh, cornerR, shape);
     let base = wasm.Manifold.extrude(outerCS, baseThk);
 
     if (borderW > 0.1 && borderH > 0.1) {
-        const innerCS = new wasm.CrossSection([shapePoly(innerHW, innerHH, innerCR, shape)]);
+        const innerCS = shapeCS(wasm, innerHW, innerHH, innerCR, shape);
         const ringCS = outerCS.subtract(innerCS);
         const ring = wasm.Manifold.extrude(ringCS, borderH).translate([0, 0, baseThk]);
         const merged = base.add(ring);
@@ -356,12 +387,13 @@ function buildPlate(wasm, font, p) {
     if (contours) {
         const nameCS = new wasm.CrossSection(contours);
         const cutCS = tolerance > 0.01 ? nameCS.offset(tolerance, 'Round', 8) : nameCS;
-        const cutter = wasm.Manifold.extrude(cutCS, textH + 0.01).translate([0, 0, baseThk]);
+        const recess = baseThk * RECESS_RATIO;
+        const cutter = wasm.Manifold.extrude(cutCS, recess + textH + 0.01).translate([0, 0, baseThk - recess]);
         const cut = base.subtract(cutter);
         base.delete();
         cutter.delete();
         base = cut;
-        text = wasm.Manifold.extrude(nameCS, textH).translate([0, 0, baseThk]);
+        text = wasm.Manifold.extrude(nameCS, recess + textH).translate([0, 0, baseThk - recess]);
         if (cutCS !== nameCS) cutCS.delete();
         nameCS.delete();
     }
@@ -470,7 +502,7 @@ Phone = "${p.phoneText}";
 Font = "${p.font}";
 
 /* [Shape] */
-Plate_Shape = "${p.shape}"; // [rounded-rect, rectangle, oval, stadium]
+Plate_Shape = "${p.shape}"; // [rounded-rect, rectangle, oval, stadium, bone]
 
 /* [Dimensions] */
 Width = ${p.width}; // [40:200]
@@ -498,6 +530,14 @@ module plate_shape(w, h, r) {
             translate([w - sr, 0]) circle(r = sr);
             translate([-(w - sr), 0]) circle(r = sr);
         }
+    } else if (Plate_Shape == "bone") {
+        bone_r = h / 2;
+        bone_cx = w - bone_r;
+        bone_b = h * 0.35;
+        union() {
+            square([2 * bone_cx, 2 * bone_b], center = true);
+            for (sx = [-1, 1], sy = [-1, 1]) translate([sx * bone_cx, sy * h / 2]) circle(r = bone_r);
+        }
     } else if (Plate_Shape == "rectangle" || r < 0.1) {
         square([w * 2, h * 2], center = true);
     } else {
@@ -517,6 +557,7 @@ module label_text() {
 
 module name_plate() {
     hw = Width / 2; hh = Height / 2;
+    recess = Base_Thickness / 2;
     difference() {
         union() {
             linear_extrude(Base_Thickness) plate_shape(hw, hh, Corner_Radius);
@@ -529,8 +570,8 @@ module name_plate() {
                         }
         }
         // Text recess
-        translate([0, 0, Base_Thickness])
-            linear_extrude(Text_Height + 0.01)
+        translate([0, 0, Base_Thickness - recess])
+            linear_extrude(recess + Text_Height + 0.01)
                 offset(delta = Fit_Tolerance)
                     label_text();
         // Mounting holes
@@ -547,8 +588,8 @@ module name_plate() {
     }
     // Text piece
     color("white")
-    translate([0, 0, Base_Thickness])
-        linear_extrude(Text_Height)
+    translate([0, 0, Base_Thickness - recess])
+        linear_extrude(recess + Text_Height)
             label_text();
 }
 
