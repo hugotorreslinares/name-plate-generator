@@ -36,7 +36,7 @@ const COLOR_PRESETS = [
     { base: '#222222', text: '#f59e0b' },
 ];
 
-const params = { nameText: 'Name', ...PRESETS.classic };
+const params = { nameText: 'Name', phoneText: '', ...PRESETS.classic };
 
 // ===== Scene =====
 const canvasArea = document.getElementById('canvasArea');
@@ -249,32 +249,56 @@ function textContours(font, text, targetHeight) {
     return contours;
 }
 
-// Centers the text, flips it to plate orientation and shrinks it if it exceeds the usable width.
+// One line per non-empty text: pet name and phone stack when both are set.
+function textLines(p) {
+    const texts = [p.nameText, p.phoneText].filter(Boolean);
+    const sizes = texts.length > 1 ? [0.34, 0.2] : [0.45];
+    return texts.map((text, i) => ({ text, size: p.height * (sizes[i] ?? sizes[0]) }));
+}
+
+// Centers each line, flips it to plate orientation, stacks the lines and shrinks any line that exceeds the usable width.
 function fitTextContours(p, font) {
-    const contours = textContours(font, p.nameText, p.height * 0.45);
-    if (!contours.length) return null;
+    const gap = p.height * 0.04;
+    const lines = textLines(p)
+        .map(({ text, size }) => ({ contours: textContours(font, text, size) }))
+        .filter(({ contours }) => contours.length);
+    if (!lines.length) return null;
 
-    const b = bounds(contours);
-    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
-    for (const c of contours) for (const pt of c) { pt[0] -= cx; pt[1] = -(pt[1] - cy); }
+    for (const line of lines) {
+        const b = bounds(line.contours);
+        const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+        for (const c of line.contours) for (const pt of c) { pt[0] -= cx; pt[1] = -(pt[1] - cy); }
 
-    const largest = contours.reduce((a, c) => (Math.abs(signedArea(c)) > Math.abs(signedArea(a)) ? c : a));
-    if (signedArea(largest) < 0) contours.forEach(c => c.reverse());
+        const largest = line.contours.reduce((a, c) => (Math.abs(signedArea(c)) > Math.abs(signedArea(a)) ? c : a));
+        if (signedArea(largest) < 0) line.contours.forEach(c => c.reverse());
 
-    const fit = bounds(contours);
-    const textW = fit.maxX - fit.minX;
-    const halfH = (fit.maxY - fit.minY) / 2;
+        const fit = bounds(line.contours);
+        line.halfH = (fit.maxY - fit.minY) / 2;
+    }
+
+    const totalH = lines.reduce((sum, l) => sum + 2 * l.halfH, 0) + gap * (lines.length - 1);
+    let top = totalH / 2;
     const hw = p.width / 2 - p.borderW - 2, hh = p.height / 2 - p.borderW - 2;
     const innerR = Math.max(0, p.cornerR - p.borderW - 2);
-    const maxW = 2 * Math.min(
-        shapeMaxXAt(hw, hh, innerR, p.shape, halfH),
-        shapeMaxXAt(hw, hh, innerR, p.shape, 0),
-    );
-    if (maxW > 0 && textW > maxW) {
-        const sc = maxW / textW;
-        for (const c of contours) for (const pt of c) { pt[0] *= sc; pt[1] *= sc; }
+
+    for (const line of lines) {
+        const yc = top - line.halfH;
+        top -= 2 * line.halfH + gap;
+
+        // Usable width at the line's outer and inner vertical edges.
+        const outer = Math.abs(yc) + line.halfH;
+        const inner = Math.max(0, Math.abs(yc) - line.halfH);
+        const maxW = 2 * Math.min(
+            shapeMaxXAt(hw, hh, innerR, p.shape, outer),
+            shapeMaxXAt(hw, hh, innerR, p.shape, inner),
+        );
+        const textW = bounds(line.contours);
+        const w = textW.maxX - textW.minX;
+        const sx = maxW > 0 && w > maxW ? maxW / w : 1;
+
+        for (const c of line.contours) for (const pt of c) { pt[0] *= sx; pt[1] += yc; }
     }
-    return contours;
+    return lines.flatMap(l => l.contours);
 }
 
 function holeCenters(p, innerHW, innerHH, innerCR) {
@@ -442,6 +466,7 @@ function buildScad(p) {
 
 /* [Text] */
 Name = "${p.nameText}";
+Phone = "${p.phoneText}";
 Font = "${p.font}";
 
 /* [Shape] */
@@ -480,6 +505,16 @@ module plate_shape(w, h, r) {
     }
 }
 
+// Two lines when Phone is set; offsets approximate the web preview's stacked layout.
+module label_text() {
+    if (Phone == "") {
+        text(Name, size = Height * 0.45, font = Font, halign = "center", valign = "center");
+    } else {
+        translate([0, Height * 0.13]) text(Name, size = Height * 0.34, font = Font, halign = "center", valign = "center");
+        translate([0, -Height * 0.12]) text(Phone, size = Height * 0.2, font = Font, halign = "center", valign = "center");
+    }
+}
+
 module name_plate() {
     hw = Width / 2; hh = Height / 2;
     difference() {
@@ -497,7 +532,7 @@ module name_plate() {
         translate([0, 0, Base_Thickness])
             linear_extrude(Text_Height + 0.01)
                 offset(delta = Fit_Tolerance)
-                    text(Name, size = Height * 0.45, font = Font, halign = "center", valign = "center");
+                    label_text();
         // Mounting holes
         if (Hole_Layout == "top-center")
             translate([0, hh - Hole_Padding, -0.5]) cylinder(d = Hole_Diameter, h = Base_Thickness + Border_Height + 2);
@@ -514,7 +549,7 @@ module name_plate() {
     color("white")
     translate([0, 0, Base_Thickness])
         linear_extrude(Text_Height)
-            text(Name, size = Height * 0.45, font = Font, halign = "center", valign = "center");
+            label_text();
 }
 
 name_plate();
