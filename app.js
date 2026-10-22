@@ -38,7 +38,7 @@ const COLOR_PRESETS = [
     { base: '#222222', text: '#f59e0b' },
 ];
 
-const params = { nameText: 'Name', phoneText: '', ...PRESETS.classic };
+const params = { nameText: 'Name', phoneText: '', nfc: false, nfcD: 25, nfcUrl: '', ...PRESETS.classic };
 
 // ===== Scene =====
 const canvasArea = document.getElementById('canvasArea');
@@ -327,6 +327,17 @@ function holeCenters(p, innerHW, innerHH, innerCR) {
     }
 }
 
+// Round pocket at the plate center for an NFC tag, cut through the base top and the text piece.
+const NFC_POCKET_DEPTH_MM = 1;
+
+function nfcPocket(wasm, p, baseThk) {
+    const depth = Math.min(NFC_POCKET_DEPTH_MM, baseThk / 2);
+    const cs = new wasm.CrossSection([circlePoly(p.nfcD / 2 + p.tolerance)]);
+    const pocket = wasm.Manifold.extrude(cs, depth + p.textH + 1).translate([0, 0, baseThk - depth]);
+    cs.delete();
+    return pocket;
+}
+
 // Builds the base plate (border, holes, text recess) and the raised text piece as Manifold solids.
 function buildPlate(wasm, font, p) {
     const { width, height, baseThk, borderW, borderH, cornerR, textH, tolerance, shape } = p;
@@ -353,6 +364,13 @@ function buildPlate(wasm, font, p) {
         base = cut;
     }
 
+    const tag = p.nfc ? nfcPocket(wasm, p, baseThk) : null;
+    if (tag) {
+        const cut = base.subtract(tag);
+        base.delete();
+        base = cut;
+    }
+
     let text = null;
     const contours = fitTextContours(p, font);
     if (contours) {
@@ -365,10 +383,16 @@ function buildPlate(wasm, font, p) {
         cutter.delete();
         base = cut;
         text = wasm.Manifold.extrude(nameCS, recess + textH).translate([0, 0, baseThk - recess]);
+        if (tag) {
+            const cutText = text.subtract(tag);
+            text.delete();
+            text = cutText;
+        }
         if (cutCS !== nameCS) cutCS.delete();
         nameCS.delete();
     }
 
+    tag?.delete();
     outerCS.delete();
     return { base, text };
 }
@@ -462,6 +486,8 @@ async function downloadParts() {
     const zip = new JSZip();
     zip.file(`${fileStem()}_base.stl`, stlBlob([baseMesh]));
     zip.file(`${fileStem()}_text.stl`, stlBlob([textMesh]));
+    // The app cannot write the tag; this file holds the URL to program into it.
+    if (params.nfc && isValidUrl(params.nfcUrl)) zip.file('nfc_url.txt', `${params.nfcUrl}\n`);
     download(await zip.generateAsync({ type: 'blob' }), `name_plate_${fileStem()}_parts.zip`);
 }
 
@@ -486,6 +512,11 @@ Border_Height = ${p.borderH}; // [0:0.1:5]
 Corner_Radius = ${p.cornerR}; // [0:0.5:30]
 Text_Height = ${p.textH}; // [0.4:0.1:5]
 Fit_Tolerance = ${p.tolerance}; // [0:0.05:1]
+
+/* [NFC Tag] */
+NFC = ${p.nfc}; // Round pocket for a tag at the plate center
+NFC_Diameter = ${p.nfcD}; // [10:0.5:40]
+// Program this URL into the tag: ${p.nfcUrl}
 
 /* [Mounting Holes] */
 Hole_Layout = "${p.holeLayout}"; // [none, top-center, top-two, left-right]
@@ -520,6 +551,12 @@ module label_text() {
     }
 }
 
+module nfc_pocket() {
+    pocket_depth = min(1, Base_Thickness / 2);
+    translate([0, 0, Base_Thickness - pocket_depth])
+        cylinder(d = NFC_Diameter + 2 * Fit_Tolerance, h = pocket_depth + Text_Height + 1);
+}
+
 module name_plate() {
     hw = Width / 2; hh = Height / 2;
     recess = Base_Thickness / 2;
@@ -550,12 +587,16 @@ module name_plate() {
             translate([-hw + Hole_Padding, 0, -0.5]) cylinder(d = Hole_Diameter, h = Base_Thickness + Border_Height + 2);
             translate([hw - Hole_Padding, 0, -0.5]) cylinder(d = Hole_Diameter, h = Base_Thickness + Border_Height + 2);
         }
+        if (NFC) nfc_pocket();
     }
     // Text piece
-    color("white")
-    translate([0, 0, Base_Thickness - recess])
-        linear_extrude(recess + Text_Height)
-            label_text();
+    difference() {
+        color("white")
+        translate([0, 0, Base_Thickness - recess])
+            linear_extrude(recess + Text_Height)
+                label_text();
+        if (NFC) nfc_pocket();
+    }
 }
 
 name_plate();
@@ -618,9 +659,27 @@ function renderFilament() {
 const controlEls = document.querySelectorAll('[data-param]');
 const outputEls = document.querySelectorAll('[data-out]');
 
+function isValidUrl(value) {
+    try {
+        return ['http:', 'https:'].includes(new URL(value).protocol);
+    } catch {
+        return false;
+    }
+}
+
+function renderNfcFields() {
+    document.getElementById('nfcFields').classList.toggle('hidden', !params.nfc);
+    const invalid = params.nfc && !isValidUrl(params.nfcUrl);
+    document.getElementById('nfcUrlError').classList.toggle('hidden', !invalid);
+}
+
 function renderControls() {
-    for (const el of controlEls) el.value = params[el.dataset.param];
+    for (const el of controlEls) {
+        if (el.type === 'checkbox') el.checked = params[el.dataset.param];
+        else el.value = params[el.dataset.param];
+    }
     for (const el of outputEls) el.textContent = params[el.dataset.out];
+    renderNfcFields();
 }
 
 function showStatus(text) {
@@ -671,9 +730,11 @@ function populateColorPicker() {
 for (const el of controlEls) {
     el.addEventListener('input', () => {
         const key = el.dataset.param;
-        params[key] = el.type === 'range' ? Number(el.value) : el.value;
+        if (el.type === 'checkbox') params[key] = el.checked;
+        else params[key] = el.type === 'range' ? Number(el.value) : el.value;
         const out = document.querySelector(`[data-out="${key}"]`);
         if (out) out.textContent = params[key];
+        renderNfcFields();
         if (key === 'font') {
             showStatus(`Loading ${params.font}...`);
             loadFont(params.font).then(hideStatus, showError);

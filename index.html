@@ -121,6 +121,23 @@
             </section>
 
             <section class="section">
+                <div class="section-title">NFC Tag</div>
+                <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" data-param="nfc" class="h-4 w-4">
+                    Round NFC tag pocket
+                </label>
+                <div id="nfcFields" class="hidden space-y-3">
+                    <label class="block"><span class="field-label">Tag Diameter <output class="field-value" data-out="nfcD"></output></span>
+                        <input type="range" data-param="nfcD" min="10" max="40" step="0.5" class="w-full"></label>
+                    <label class="block space-y-1">
+                        <span class="field-label">Tap URL</span>
+                        <input class="input" type="url" data-param="nfcUrl" placeholder="https://example.com">
+                        <span id="nfcUrlError" class="hidden text-xs text-red-600">Enter a valid http:// or https:// URL</span>
+                    </label>
+                </div>
+            </section>
+
+            <section class="section">
                 <div class="section-title">Style</div>
                 <div class="flex flex-wrap gap-2" id="colorPicker"></div>
             </section>
