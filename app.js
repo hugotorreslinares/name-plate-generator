@@ -205,20 +205,31 @@ function holeCenters(p, innerHW, innerHH, innerCR) {
     }
 }
 
-// Round pocket at the plate center for an NFC tag, cut through the base top and the text piece.
-const NFC_POCKET_DEPTH_MM = 1;
+// Closed NFC pocket inside the base: a roof stays over it, so it is hidden once printing resumes.
+// Print pauses at pauseZ (the pocket floor), the tag is placed, then printing continues.
+const NFC_ROOF_MM = 1;
+const NFC_POCKET_H_MM = 1.2; // tag thickness plus clearance
+const NFC_MIN_FLOOR_MM = 0.8;
+const NFC_MIN_BASE_MM = NFC_MIN_FLOOR_MM + NFC_POCKET_H_MM + NFC_ROOF_MM;
 
-function nfcPocket(wasm, p, baseThk) {
-    const depth = Math.min(NFC_POCKET_DEPTH_MM, baseThk / 2);
-    const cs = new wasm.CrossSection([circlePoly(p.nfcD / 2 + p.tolerance)]);
-    const pocket = wasm.Manifold.extrude(cs, depth + p.textH + 1).translate([0, 0, baseThk - depth]);
+function nfcLayout(p) {
+    const baseThk = Math.max(p.baseThk, NFC_MIN_BASE_MM);
+    const z1 = baseThk - NFC_ROOF_MM;
+    return { baseThk, z0: z1 - NFC_POCKET_H_MM, z1, radius: p.nfcD / 2 + p.tolerance };
+}
+
+function nfcCylinder(wasm, radius, z0, z1) {
+    const cs = new wasm.CrossSection([circlePoly(radius)]);
+    const cylinder = wasm.Manifold.extrude(cs, z1 - z0).translate([0, 0, z0]);
     cs.delete();
-    return pocket;
+    return cylinder;
 }
 
 // Builds the base plate (border, holes, text recess) and the raised text piece as Manifold solids.
 function buildPlate(wasm, font, p) {
-    const { width, height, baseThk, borderW, borderH, cornerR, textH, tolerance, shape } = p;
+    const nfc = p.nfc ? nfcLayout(p) : null;
+    const baseThk = nfc ? nfc.baseThk : p.baseThk;
+    const { width, height, borderW, borderH, cornerR, textH, tolerance, shape } = p;
     const hw = width / 2, hh = height / 2;
     const innerHW = hw - borderW, innerHH = hh - borderW, innerCR = Math.max(0, cornerR - borderW);
 
@@ -242,11 +253,15 @@ function buildPlate(wasm, font, p) {
         base = cut;
     }
 
-    const tag = p.nfc ? nfcPocket(wasm, p, baseThk) : null;
-    if (tag) {
-        const cut = base.subtract(tag);
+    // The column above the pocket keeps the text recess and text piece from opening the pocket.
+    let column = null;
+    if (nfc) {
+        const pocket = nfcCylinder(wasm, nfc.radius, nfc.z0, nfc.z1);
+        const cut = base.subtract(pocket);
         base.delete();
+        pocket.delete();
         base = cut;
+        column = nfcCylinder(wasm, nfc.radius, nfc.z0, baseThk);
     }
 
     let text = null;
@@ -255,30 +270,37 @@ function buildPlate(wasm, font, p) {
         const nameCS = new wasm.CrossSection(contours);
         const cutCS = tolerance > 0.01 ? nameCS.offset(tolerance, 'Round', 8) : nameCS;
         const recess = baseThk * RECESS_RATIO;
-        const cutter = wasm.Manifold.extrude(cutCS, recess + textH + 0.01).translate([0, 0, baseThk - recess]);
+        let cutter = wasm.Manifold.extrude(cutCS, recess + textH + 0.01).translate([0, 0, baseThk - recess]);
+        if (column) {
+            const cutterOutsidePocket = cutter.subtract(column);
+            cutter.delete();
+            cutter = cutterOutsidePocket;
+        }
         const cut = base.subtract(cutter);
         base.delete();
         cutter.delete();
         base = cut;
         text = wasm.Manifold.extrude(nameCS, recess + textH).translate([0, 0, baseThk - recess]);
-        if (tag) {
-            const cutText = text.subtract(tag);
+        if (column) {
+            const textOutsidePocket = text.subtract(column);
             text.delete();
-            text = cutText;
+            text = textOutsidePocket;
         }
         if (cutCS !== nameCS) cutCS.delete();
         nameCS.delete();
     }
 
-    tag?.delete();
+    column?.delete();
     outerCS.delete();
-    return { base, text };
+    return { base, text, pauseZ: nfc ? nfc.z0 : null };
 }
 
 // ===== Regeneration (serialized so Manifold calls never overlap) =====
 async function regenerate() {
     const [wasm, font] = await Promise.all([loadManifold(), loadFont(params.font)]);
-    const { base, text } = buildPlate(wasm, font, params);
+    const { base, text, pauseZ } = buildPlate(wasm, font, params);
+    nfcPauseMm = pauseZ;
+    document.getElementById('nfcPause').textContent = pauseZ === null ? '—' : `Z = ${pauseZ.toFixed(2)} mm`;
     partVolumes = { base: manifoldVolume(base), text: text ? manifoldVolume(text) : 0 };
 
     baseMesh.geometry.dispose();
@@ -330,14 +352,24 @@ async function downloadParts() {
     const zip = new JSZip();
     zip.file(`${fileStem()}_base.stl`, stlBlob([baseMesh]));
     zip.file(`${fileStem()}_text.stl`, stlBlob([textMesh]));
-    // The app cannot write the tag; this file holds the URL to program into it.
-    if (params.nfc && isValidUrl(params.nfcUrl)) zip.file('nfc_url.txt', `${params.nfcUrl}\n`);
+    // The app cannot write the tag or add a pause to the STL; this file has the URL and the pause height.
+    if (params.nfc && isValidUrl(params.nfcUrl)) {
+        zip.file('nfc_url.txt', `URL: ${params.nfcUrl}\nPause printing at Z = ${nfcPauseMm.toFixed(2)} mm, insert the tag, then resume.\n`);
+    }
     download(await zip.generateAsync({ type: 'blob' }), `name_plate_${fileStem()}_parts.zip`);
 }
 
 function buildScad(p) {
     return `// Parametric Name Plate Generator
 // Generated by PrintPal — printpal.io/tools/name-plate-generator
+
+/* [NFC Tag] */
+NFC = ${p.nfc}; // Closed pocket at the plate center for a round tag
+NFC_Diameter = ${p.nfcD}; // [10:0.5:40]
+// Program this URL into the tag: ${p.nfcUrl}
+// Pause printing at Z = ${p.nfc ? (Math.max(p.baseThk, NFC_MIN_BASE_MM) - NFC_ROOF_MM - NFC_POCKET_H_MM).toFixed(2) : '-'} mm, insert the tag, then resume.
+nfc_roof = 1;
+nfc_pocket_h = 1.2;
 
 /* [Text] */
 Name = "${p.nameText}";
@@ -350,17 +382,12 @@ Plate_Shape = "${p.shape}"; // [rounded-rect, rectangle, oval, stadium]
 /* [Dimensions] */
 Width = ${p.width}; // [40:200]
 Height = ${p.height}; // [15:120]
-Base_Thickness = ${p.baseThk}; // [1:0.1:6]
+Base_Thickness = NFC ? max(${p.baseThk}, nfc_roof + nfc_pocket_h + 0.8) : ${p.baseThk}; // [1:0.1:6]
 Border_Width = ${p.borderW}; // [0:0.5:10]
 Border_Height = ${p.borderH}; // [0:0.1:5]
 Corner_Radius = ${p.cornerR}; // [0:0.5:30]
 Text_Height = ${p.textH}; // [0.4:0.1:5]
 Fit_Tolerance = ${p.tolerance}; // [0:0.05:1]
-
-/* [NFC Tag] */
-NFC = ${p.nfc}; // Round pocket for a tag at the plate center
-NFC_Diameter = ${p.nfcD}; // [10:0.5:40]
-// Program this URL into the tag: ${p.nfcUrl}
 
 /* [Mounting Holes] */
 Hole_Layout = "${p.holeLayout}"; // [none, top-center, top-two, left-right]
@@ -395,10 +422,8 @@ module label_text() {
     }
 }
 
-module nfc_pocket() {
-    pocket_depth = min(1, Base_Thickness / 2);
-    translate([0, 0, Base_Thickness - pocket_depth])
-        cylinder(d = NFC_Diameter + 2 * Fit_Tolerance, h = pocket_depth + Text_Height + 1);
+module nfc_cylinder(z0, h) {
+    translate([0, 0, z0]) cylinder(d = NFC_Diameter + 2 * Fit_Tolerance, h = h);
 }
 
 module name_plate() {
@@ -415,11 +440,14 @@ module name_plate() {
                             plate_shape(hw - Border_Width, hh - Border_Width, max(0, Corner_Radius - Border_Width));
                         }
         }
-        // Text recess
-        translate([0, 0, Base_Thickness - recess])
-            linear_extrude(recess + Text_Height + 0.01)
-                offset(delta = Fit_Tolerance)
-                    label_text();
+        // Text recess, kept off the NFC column so the roof over the pocket stays closed
+        difference() {
+            translate([0, 0, Base_Thickness - recess])
+                linear_extrude(recess + Text_Height + 0.01)
+                    offset(delta = Fit_Tolerance)
+                        label_text();
+            if (NFC) nfc_cylinder(Base_Thickness - nfc_roof - nfc_pocket_h, nfc_pocket_h + nfc_roof);
+        }
         // Mounting holes
         if (Hole_Layout == "top-center")
             translate([0, hh - Hole_Padding, -0.5]) cylinder(d = Hole_Diameter, h = Base_Thickness + Border_Height + 2);
@@ -431,7 +459,8 @@ module name_plate() {
             translate([-hw + Hole_Padding, 0, -0.5]) cylinder(d = Hole_Diameter, h = Base_Thickness + Border_Height + 2);
             translate([hw - Hole_Padding, 0, -0.5]) cylinder(d = Hole_Diameter, h = Base_Thickness + Border_Height + 2);
         }
-        if (NFC) nfc_pocket();
+        // Closed NFC pocket inside the base
+        if (NFC) nfc_cylinder(Base_Thickness - nfc_roof - nfc_pocket_h, nfc_pocket_h);
     }
     // Text piece
     difference() {
@@ -439,7 +468,7 @@ module name_plate() {
         translate([0, 0, Base_Thickness - recess])
             linear_extrude(recess + Text_Height)
                 label_text();
-        if (NFC) nfc_pocket();
+        if (NFC) nfc_cylinder(Base_Thickness - nfc_roof - nfc_pocket_h, nfc_pocket_h + nfc_roof);
     }
 }
 
@@ -453,6 +482,7 @@ const FILAMENT_DIAMETER_MM = 1.75;
 const FILAMENT_AREA_MM2 = Math.PI * (FILAMENT_DIAMETER_MM / 2) ** 2;
 
 let partVolumes = { base: 0, text: 0 };
+let nfcPauseMm = null;
 
 
 // Solid volume only: real usage is lower with infill, so this is an upper bound.

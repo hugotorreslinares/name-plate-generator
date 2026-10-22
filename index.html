@@ -134,6 +134,8 @@
                     Round NFC tag pocket
                 </label>
                 <div id="nfcFields" class="hidden space-y-3">
+                    <p class="text-xs text-slate-500">Pocket is closed by a 1 mm roof. Base is at least 3 mm.</p>
+                    <div class="flex justify-between text-xs"><span>Pause printing at</span><span id="nfcPause" class="font-semibold text-blue-600">—</span></div>
                     <label class="block"><span class="field-label">Tag Diameter <output class="field-value" data-out="nfcD"></output></span>
                         <input type="range" data-param="nfcD" min="10" max="40" step="0.5" class="w-full"></label>
                     <label class="block space-y-1">
