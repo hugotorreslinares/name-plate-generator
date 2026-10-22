@@ -19,6 +19,8 @@
     <style type="text/tailwindcss">
         .btn { @apply inline-flex items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50; }
         .btn-green { @apply border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600; }
+        .tab { @apply rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100; }
+        .tab-active { @apply bg-blue-500 text-white hover:bg-blue-600; }
         .btn-active { @apply border-blue-500 bg-blue-500 text-white hover:bg-blue-600; }
         .section { @apply space-y-3 border-b border-slate-200 py-4; }
         .section-title { @apply text-xs font-semibold uppercase tracking-wide text-slate-500; }
@@ -29,7 +31,10 @@
 </head>
 <body class="flex h-screen flex-col overflow-hidden bg-slate-100 font-sans text-slate-700">
     <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
-        <h1 class="text-sm font-semibold text-slate-800">Garabatop Regalos tag generator</h1>
+        <nav class="flex gap-1">
+            <a href="index.html" class="tab tab-active">Name Plate</a>
+            <a href="song-card.html" class="tab">Song Card</a>
+        </nav>
         <div class="flex gap-2">
             <button id="btnStl" class="btn btn-green"><i>↓</i> Download STL</button>
         </div>
