@@ -2,26 +2,83 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
-    FONTS, bounds, download, loadFont, loadManifold, manifoldToGeometry, signedArea, stlBlob, textContours,
+    FONTS, bounds, download, loadFont, loadManifold, manifoldToGeometry, roundRectPoly, signedArea, stlBlob, textContours,
 } from './common.js';
 
 const CARD = { width: 140, height: 210, thickness: 2, radius: 8, margin: 10, textH: 1 };
 const PHOTO = { width: 100, height: 70, top: 12 };
+const BAR = { width: 120, height: 2.5, y: -CARD.height / 2 + 14 };
 const LINE_GAP_MM = 3;
 const MAX_LYRIC_LINES = 3;
+// Text stops above the progress bar.
+const TEXT_BOTTOM_Y = BAR.y + 8;
 
 const song = {
     title: 'Song Title',
     artist: 'Artist',
     album: '',
     duration: '',
+    positionSec: 0,
     lyrics: '',
+    printed: [],
+    touched: [],
+    highlightLine: -1,
     font: 'Lobster',
     baseColor: '#f5efe0',
+    accentColor: '#e0a526',
     textColor: '#1d1d1d',
     photoWindow: true,
 };
 let photoImage = null;
+
+// ===== Time and lyric selection =====
+function durationSeconds(s) {
+    const m = /^(\d{1,3}):([0-5]\d)$/.exec(s.duration.trim());
+    return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+}
+
+function formatTime(sec) {
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}
+
+function printedIndices(s) {
+    return s.lyrics.split('\n').flatMap((text, i) => (text.trim() && s.printed[i] ? [i] : []));
+}
+
+// Lines the user has not toggled fill the free print slots in order; toggled lines keep their choice.
+function syncLyricState() {
+    const lines = song.lyrics.split('\n');
+    const isLine = i => lines[i].trim() !== '';
+    const touchedPrinted = lines.filter((_, i) => isLine(i) && song.touched[i] && song.printed[i]).length;
+    let slots = MAX_LYRIC_LINES - touchedPrinted;
+
+    lines.forEach((_, i) => {
+        if (!isLine(i)) {
+            song.printed[i] = false;
+        } else if (!song.touched[i]) {
+            song.printed[i] = slots > 0;
+            if (slots > 0) slots--;
+        }
+    });
+    song.printed.length = lines.length;
+    song.touched.length = lines.length;
+    if (!printedIndices(song).includes(song.highlightLine)) {
+        song.highlightLine = printedIndices(song)[0] ?? -1;
+    }
+}
+
+function togglePrinted(i, on) {
+    song.printed[i] = on;
+    song.touched[i] = true;
+    if (!on && song.highlightLine === i) song.highlightLine = printedIndices(song)[0] ?? -1;
+    if (on && song.highlightLine < 0) song.highlightLine = i;
+    refreshLyrics();
+}
+
+function setHighlight(i) {
+    song.highlightLine = i;
+    refreshLyrics();
+}
 
 // ===== Scene =====
 const canvasArea = document.getElementById('canvasArea');
@@ -61,57 +118,50 @@ renderer.setAnimationLoop(() => {
     renderer.render(scene, camera);
 });
 
-const cardMaterial = new THREE.MeshStandardMaterial({ roughness: 0.6 });
-const textMaterial = new THREE.MeshStandardMaterial({ roughness: 0.5 });
-const cardMesh = new THREE.Mesh(new THREE.BufferGeometry(), cardMaterial);
-const textMesh = new THREE.Mesh(new THREE.BufferGeometry(), textMaterial);
-scene.add(cardMesh, textMesh);
+const materials = {
+    card: new THREE.MeshStandardMaterial({ roughness: 0.6 }),
+    text: new THREE.MeshStandardMaterial({ roughness: 0.5 }),
+    accent: new THREE.MeshStandardMaterial({ roughness: 0.5 }),
+};
+const cardMesh = new THREE.Mesh(new THREE.BufferGeometry(), materials.card);
+const textMesh = new THREE.Mesh(new THREE.BufferGeometry(), materials.text);
+const accentMesh = new THREE.Mesh(new THREE.BufferGeometry(), materials.accent);
+scene.add(cardMesh, textMesh, accentMesh);
 
 // ===== Geometry =====
-function roundRectPoly(hw, hh, r, segs = 8) {
-    const corners = [
-        [hw - r, hh - r, 0],
-        [-hw + r, hh - r, Math.PI / 2],
-        [-hw + r, -hh + r, Math.PI],
-        [hw - r, -hh + r, (3 * Math.PI) / 2],
-    ];
-    return corners.flatMap(([cx, cy, a0]) =>
-        Array.from({ length: segs + 1 }, (_, i) => {
-            const a = a0 + ((Math.PI / 2) * i) / segs;
-            return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-        }),
-    );
-}
-
 function rectPoly(cx, cy, hw, hh) {
     return [[cx - hw, cy - hh], [cx + hw, cy - hh], [cx + hw, cy + hh], [cx - hw, cy + hh]];
 }
 
 function songLines(s) {
-    const lyrics = s.lyrics.split('\n').map(l => l.trim()).filter(Boolean).slice(0, MAX_LYRIC_LINES);
+    const lyrics = s.lyrics.split('\n')
+        .map((text, i) => ({ text: text.trim(), i }))
+        .filter(({ text, i }) => text && s.printed[i])
+        .slice(0, MAX_LYRIC_LINES)
+        .map(({ text, i }) => ({ text, size: 5, highlight: i === s.highlightLine }));
     return [
-        { text: s.title, size: 11 },
-        { text: s.artist, size: 7 },
-        ...lyrics.map(text => ({ text, size: 5 })),
-        { text: [s.album, s.duration].filter(Boolean).join(' · '), size: 4 },
+        { text: s.title, size: 11, highlight: false },
+        { text: s.artist, size: 7, highlight: false },
+        ...lyrics,
+        { text: s.album, size: 4, highlight: false },
     ].filter(line => line.text.trim());
 }
 
-// Stacks the lines from topY downward, centered on the card, shrinking any line wider than the margins.
+// Stacks the lines from topY downward, centered on the card. Highlighted lines go to a separate layer.
 function layoutText(font, lines, topY) {
     const maxW = CARD.width - 2 * CARD.margin;
     const bottomY = -CARD.height / 2 + CARD.margin;
-    const placed = [];
+    const layers = { normal: [], accent: [] };
     let y = topY;
 
-    for (const { text, size } of lines) {
+    for (const { text, size, highlight } of lines) {
         const contours = textContours(font, text, size);
         if (!contours.length) continue;
 
         const b = bounds(contours);
         const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
         const h = b.maxY - b.minY;
-        if (y - h < bottomY) break;
+        if (y - h < Math.max(bottomY, TEXT_BOTTOM_Y)) break;
 
         const sx = b.maxX - b.minX > maxW ? maxW / (b.maxX - b.minX) : 1;
         const yc = y - h / 2;
@@ -122,10 +172,31 @@ function layoutText(font, lines, topY) {
         const largest = contours.reduce((a, c) => (Math.abs(signedArea(c)) > Math.abs(signedArea(a)) ? c : a));
         if (signedArea(largest) < 0) contours.forEach(c => c.reverse());
 
-        placed.push(...contours);
+        (highlight ? layers.accent : layers.normal).push(...contours);
         y -= h + LINE_GAP_MM;
     }
-    return placed;
+    return layers;
+}
+
+// Progress bar: the filled part is accent-colored, the remaining track is text-colored. Null when no duration.
+function progressRects(s) {
+    const duration = durationSeconds(s);
+    if (!duration) return { track: null, fill: null };
+
+    const fraction = Math.min(1, s.positionSec / duration);
+    const left = -BAR.width / 2;
+    const fillW = BAR.width * fraction;
+    const fill = fillW > 0.1 ? rectPoly(left + fillW / 2, BAR.y, fillW / 2, BAR.height / 2) : null;
+    const trackW = BAR.width - fillW;
+    const track = trackW > 0.1 ? rectPoly(left + fillW + trackW / 2, BAR.y, trackW / 2, BAR.height / 2) : null;
+    return { track, fill };
+}
+
+function extrudeContours(wasm, contours) {
+    const cs = new wasm.CrossSection(contours);
+    const solid = wasm.Manifold.extrude(cs, CARD.textH).translate([0, 0, CARD.thickness]);
+    cs.delete();
+    return solid;
 }
 
 function buildCard(wasm, font, s) {
@@ -146,30 +217,36 @@ function buildCard(wasm, font, s) {
     }
 
     const topY = s.photoWindow ? photoBottom - 5 : hh - CARD.margin;
-    const contours = layoutText(font, songLines(s), topY);
-    if (!contours.length) return { card, text: null };
+    const { normal, accent } = layoutText(font, songLines(s), topY);
+    const { track, fill } = progressRects(s);
+    if (track) normal.push(track);
+    if (fill) accent.push(fill);
 
-    const textCS = new wasm.CrossSection(contours);
-    const text = wasm.Manifold.extrude(textCS, CARD.textH).translate([0, 0, CARD.thickness]);
-    textCS.delete();
-    return { card, text };
+    return {
+        card,
+        text: normal.length ? extrudeContours(wasm, normal) : null,
+        accent: accent.length ? extrudeContours(wasm, accent) : null,
+    };
 }
 
 // ===== Regeneration (serialized) =====
+function setMesh(mesh, solid) {
+    if (!solid) {
+        mesh.visible = false;
+        return;
+    }
+    mesh.visible = true;
+    mesh.geometry.dispose();
+    mesh.geometry = manifoldToGeometry(solid);
+    solid.delete();
+}
+
 async function regenerate() {
     const [wasm, font] = await Promise.all([loadManifold(), loadFont(song.font)]);
-    const { card, text } = buildCard(wasm, font, song);
-
-    cardMesh.geometry.dispose();
-    cardMesh.geometry = manifoldToGeometry(card);
-    card.delete();
-
-    textMesh.visible = Boolean(text);
-    if (text) {
-        textMesh.geometry.dispose();
-        textMesh.geometry = manifoldToGeometry(text);
-        text.delete();
-    }
+    const { card, text, accent } = buildCard(wasm, font, song);
+    setMesh(cardMesh, card);
+    setMesh(textMesh, text);
+    setMesh(accentMesh, accent);
     renderStats();
     draw2d();
 }
@@ -200,9 +277,8 @@ function draw2d() {
     ctx.roundRect(0, 0, w, h, mm(CARD.radius));
     ctx.fill();
 
-    const photoTop = mm(PHOTO.top);
     if (song.photoWindow) {
-        const x = (w - mm(PHOTO.width)) / 2, y = photoTop, pw = mm(PHOTO.width), ph = mm(PHOTO.height);
+        const x = (w - mm(PHOTO.width)) / 2, y = mm(PHOTO.top), pw = mm(PHOTO.width), ph = mm(PHOTO.height);
         ctx.save();
         ctx.beginPath();
         ctx.rect(x, y, pw, ph);
@@ -215,13 +291,27 @@ function draw2d() {
 
     // yFromTop is measured in mm from the card's top edge, matching layoutText.
     let yFromTop = song.photoWindow ? PHOTO.top + PHOTO.height + 5 : CARD.margin;
-    ctx.fillStyle = song.textColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    for (const { text, size } of songLines(song)) {
+    for (const { text, size, highlight } of songLines(song)) {
+        ctx.fillStyle = highlight ? song.accentColor : song.textColor;
         ctx.font = `${mm(size) * 1.1}px "${song.font}", sans-serif`;
         ctx.fillText(text, w / 2, mm(yFromTop + size * 0.8), mm(CARD.width - 2 * CARD.margin));
         yFromTop += size + LINE_GAP_MM;
+    }
+
+    const { track, fill } = progressRects(song);
+    const barY = mm(CARD.height / 2 - BAR.y - BAR.height / 2);
+    const barLeft = w / 2 - mm(BAR.width / 2);
+    if (track || fill) {
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = song.textColor;
+        ctx.fillRect(barLeft, barY, mm(BAR.width), mm(BAR.height));
+        ctx.globalAlpha = 1;
+    }
+    if (fill) {
+        ctx.fillStyle = song.accentColor;
+        ctx.fillRect(barLeft, barY, mm(BAR.width * (song.positionSec / durationSeconds(song))), mm(BAR.height));
     }
 }
 
@@ -232,14 +322,15 @@ function drawCover(img, x, y, w, h) {
 }
 
 // ===== Stats and export =====
+const visibleMeshes = () => [cardMesh, textMesh, accentMesh].filter(m => m.visible);
+
 function renderStats() {
-    const meshes = [cardMesh, textMesh].filter(m => m.visible);
-    const tris = meshes.reduce((n, m) => n + m.geometry.attributes.position.count / 3, 0);
+    const tris = visibleMeshes().reduce((n, m) => n + m.geometry.attributes.position.count / 3, 0);
     document.getElementById('statTris').textContent = tris.toLocaleString();
 }
 
 function downloadStl() {
-    const meshes = [cardMesh, textMesh].filter(m => m.visible);
+    const meshes = visibleMeshes();
     if (meshes.length) download(stlBlob(meshes), `song_card_${song.title.replace(/\s+/g, '_')}.stl`);
 }
 
@@ -251,10 +342,48 @@ function showError(err) {
 
 // ===== UI =====
 const fieldEls = document.querySelectorAll('[data-field]');
+const positionSlider = document.querySelector('input[data-field="positionSec"]');
 
 function populateFontSelect() {
     const select = document.querySelector('select[data-field="font"]');
     for (const name of Object.keys(FONTS)) select.append(new Option(name, name));
+}
+
+function renderTimeControls() {
+    const duration = durationSeconds(song);
+    positionSlider.max = duration;
+    positionSlider.disabled = duration === 0;
+    song.positionSec = Math.min(song.positionSec, duration);
+    positionSlider.value = song.positionSec;
+    document.getElementById('positionOut').textContent =
+        duration ? `${formatTime(song.positionSec)} / ${formatTime(duration)}` : 'Set a duration to show progress';
+}
+
+function renderLyricList() {
+    const list = document.getElementById('lyricList');
+    const lines = song.lyrics.split('\n');
+    const printedCount = printedIndices(song).length;
+
+    list.replaceChildren(...lines.flatMap((text, i) => {
+        if (!text.trim()) return [];
+
+        const print = Object.assign(document.createElement('input'), { type: 'checkbox', checked: Boolean(song.printed[i]) });
+        print.disabled = !song.printed[i] && printedCount >= MAX_LYRIC_LINES;
+        print.addEventListener('change', () => togglePrinted(i, print.checked));
+
+        const highlight = Object.assign(document.createElement('input'), { type: 'radio', name: 'highlight', checked: song.highlightLine === i });
+        highlight.disabled = !song.printed[i];
+        highlight.addEventListener('change', () => setHighlight(i));
+
+        const label = document.createElement('span');
+        label.className = 'truncate';
+        label.textContent = text.trim();
+
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2 text-sm';
+        row.append(print, highlight, label);
+        return [row];
+    }));
 }
 
 function renderControls() {
@@ -263,17 +392,34 @@ function renderControls() {
         if (el.type === 'checkbox') el.checked = value;
         else el.value = value;
     }
+    renderLyricList();
+    renderTimeControls();
+}
+
+function refreshLyrics() {
+    renderLyricList();
+    draw2d();
+    scheduleRegen();
 }
 
 for (const el of fieldEls) {
     el.addEventListener('input', () => {
         const key = el.dataset.field;
-        song[key] = el.type === 'checkbox' ? el.checked : el.value;
+        if (el.type === 'checkbox') song[key] = el.checked;
+        else if (el.type === 'range') song[key] = Number(el.value);
+        else song[key] = el.value;
+
+        if (key === 'lyrics') {
+            syncLyricState();
+            renderLyricList();
+        }
+        if (key === 'duration' || key === 'positionSec') renderTimeControls();
         if (key === 'font') loadFont(song.font).then(() => scheduleRegen(), showError);
         // Colors only change materials and the 2D preview; no need to rebuild the geometry.
-        if (key === 'baseColor') cardMaterial.color.set(song.baseColor);
-        if (key === 'textColor') textMaterial.color.set(song.textColor);
-        if (key === 'baseColor' || key === 'textColor') draw2d();
+        if (key === 'baseColor') materials.card.color.set(song.baseColor);
+        if (key === 'textColor') materials.text.color.set(song.textColor);
+        if (key === 'accentColor') materials.accent.color.set(song.accentColor);
+        if (key === 'baseColor' || key === 'textColor' || key === 'accentColor') draw2d();
         else scheduleRegen();
     });
 }
@@ -297,9 +443,11 @@ document.getElementById('btnStl').addEventListener('click', downloadStl);
 document.getElementById('btnStlSidebar').addEventListener('click', downloadStl);
 
 populateFontSelect();
+syncLyricState();
 renderControls();
-cardMaterial.color.set(song.baseColor);
-textMaterial.color.set(song.textColor);
+materials.card.color.set(song.baseColor);
+materials.text.color.set(song.textColor);
+materials.accent.color.set(song.accentColor);
 
 // ===== Init =====
 (async () => {

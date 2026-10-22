@@ -32,6 +32,8 @@
         <nav class="flex gap-1">
             <a href="index.html" class="tab">Name Plate</a>
             <a href="song-card.html" class="tab tab-active">Song Card</a>
+            <a href="keychain.html" class="tab">Keychain</a>
+            <a href="beads.html" class="tab">Beads</a>
         </nav>
         <button id="btnStl" class="btn btn-green">↓ Download STL</button>
     </header>
@@ -60,10 +62,25 @@
                     <input class="input" type="text" data-field="album" maxlength="40"></label>
                 <label class="block space-y-1"><span class="field-label">Duration (optional)</span>
                     <input class="input" type="text" data-field="duration" maxlength="10" placeholder="3:45"></label>
-                <label class="block space-y-1"><span class="field-label">Lyrics (up to 3 lines)</span>
-                    <textarea class="input" rows="3" data-field="lyrics"></textarea></label>
+                <label class="block space-y-1"><span class="field-label">Lyrics (one line per row)</span>
+                    <textarea class="input" rows="4" data-field="lyrics"></textarea></label>
+                <div class="space-y-1">
+                    <div class="field-label"><span>Print (max 3)</span><span>Highlight</span></div>
+                    <div id="lyricList" class="max-h-48 space-y-1 overflow-y-auto"></div>
+                </div>
                 <label class="block space-y-1"><span class="field-label">Font</span>
                     <select class="input" data-field="font"></select></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Time</div>
+                <label class="block space-y-1"><span class="field-label">Duration (mm:ss)</span>
+                    <input class="input" type="text" data-field="duration" maxlength="6" placeholder="3:45"></label>
+                <label class="block space-y-1">
+                    <span class="field-label">Position <output id="positionOut" class="field-value"></output></span>
+                    <input type="range" data-field="positionSec" min="0" max="0" step="1" class="w-full">
+                </label>
+                <p class="text-xs text-slate-500">Sets the progress bar at the bottom of the card.</p>
             </section>
 
             <section class="section">
@@ -82,6 +99,8 @@
                     <input type="color" data-field="baseColor" class="h-8 w-12"></label>
                 <label class="flex items-center justify-between text-sm">Text
                     <input type="color" data-field="textColor" class="h-8 w-12"></label>
+                <label class="flex items-center justify-between text-sm">Highlight and progress
+                    <input type="color" data-field="accentColor" class="h-8 w-12"></label>
             </section>
 
             <section class="section">

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Garabatop Regalos keychain generator</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lobster&family=Pacifico&family=Dancing+Script:wght@700&family=Playfair+Display:wght@700&family=Montserrat:wght@700&family=Poppins:wght@700&family=Oswald:wght@700&display=swap">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style type="text/tailwindcss">
+        .btn { @apply inline-flex items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50; }
+        .btn-green { @apply border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600; }
+        .tab { @apply rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100; }
+        .tab-active { @apply bg-blue-500 text-white hover:bg-blue-600; }
+        .section { @apply space-y-3 border-b border-slate-200 py-4; }
+        .section-title { @apply text-xs font-semibold uppercase tracking-wide text-slate-500; }
+        .field-label { @apply flex justify-between text-xs text-slate-600; }
+        .field-value { @apply font-semibold text-blue-600; }
+        .input { @apply w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm; }
+    </style>
+</head>
+<body class="flex h-screen flex-col overflow-hidden bg-slate-100 font-sans text-slate-700">
+    <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
+        <nav class="flex gap-1">
+            <a href="index.html" class="tab">Name Plate</a>
+            <a href="song-card.html" class="tab">Song Card</a>
+            <a href="keychain.html" class="tab tab-active">Keychain</a>
+            <a href="beads.html" class="tab">Beads</a>
+        </nav>
+        <button id="btnStl" class="btn btn-green">↓ Download STL</button>
+    </header>
+
+    <div class="flex min-h-0 flex-1">
+        <div class="flex min-w-0 flex-1 flex-col">
+            <div class="flex h-1/2 items-center justify-center bg-slate-200 p-4">
+                <canvas id="preview2d" class="h-full max-w-full rounded-md bg-white shadow"></canvas>
+            </div>
+            <div id="canvasArea" class="relative min-h-0 flex-1">
+                <canvas id="canvas" class="absolute inset-0 h-full w-full"></canvas>
+                <div id="loading" class="absolute inset-0 grid place-items-center bg-slate-100/80 text-sm">
+                    <span id="loadingText">Loading 3D engine...</span>
+                </div>
+            </div>
+        </div>
+
+        <aside class="w-80 shrink-0 overflow-y-auto border-l border-slate-200 bg-white px-4">
+            <section class="section">
+                <div class="section-title">Charm</div>
+                <label class="block space-y-1"><span class="field-label">Letters (max 2)</span>
+                    <input class="input" type="text" data-field="text" maxlength="2" placeholder="A"></label>
+                <label class="block space-y-1"><span class="field-label">Font</span>
+                    <select class="input" data-field="font"></select></label>
+                <label class="block space-y-1"><span class="field-label">Shape</span>
+                    <select class="input" data-field="shape">
+                        <option value="rounded">Rounded tag</option>
+                        <option value="oval">Oval</option>
+                    </select></label>
+                <label class="block"><span class="field-label">Width <output class="field-value" data-out="width"></output></span>
+                    <input type="range" data-field="width" min="20" max="50" step="1" class="w-full"></label>
+                <label class="block"><span class="field-label">Height <output class="field-value" data-out="height"></output></span>
+                    <input type="range" data-field="height" min="20" max="50" step="1" class="w-full"></label>
+                <label class="block"><span class="field-label">Thickness <output class="field-value" data-out="thickness"></output></span>
+                    <input type="range" data-field="thickness" min="2" max="5" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Letter Height <output class="field-value" data-out="textH"></output></span>
+                    <input type="range" data-field="textH" min="0.6" max="3" step="0.2" class="w-full"></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Cord and knot</div>
+                <label class="block space-y-1"><span class="field-label">Knot</span>
+                    <select class="input" data-field="knot">
+                        <option value="round">Round eyelet (single loop)</option>
+                        <option value="slot">Slot (lark's head / double loop)</option>
+                    </select></label>
+                <label class="block"><span class="field-label">Cord diameter <output class="field-value" data-out="cordD"></output></span>
+                    <input type="range" data-field="cordD" min="2" max="6" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Fit tolerance <output class="field-value" data-out="tolerance"></output></span>
+                    <input type="range" data-field="tolerance" min="0" max="1" step="0.05" class="w-full"></label>
+                <label class="flex items-center justify-between text-sm">Cord color (preview only)
+                    <input type="color" data-field="cordColor" class="h-8 w-12"></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Colors</div>
+                <label class="flex items-center justify-between text-sm">Charm
+                    <input type="color" data-field="baseColor" class="h-8 w-12"></label>
+                <label class="flex items-center justify-between text-sm">Letters
+                    <input type="color" data-field="textColor" class="h-8 w-12"></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Model Info</div>
+                <div class="flex justify-between text-xs"><span>Triangles</span><span id="statTris" class="font-semibold text-blue-600">—</span></div>
+                <div class="flex justify-between text-xs"><span>Hole</span><span id="statHole" class="font-semibold">—</span></div>
+            </section>
+
+            <section class="space-y-2 py-4">
+                <button id="btnStlSidebar" class="btn btn-green w-full">Download STL</button>
+                <p class="text-center text-xs text-slate-500">The cord is not printed; it only shows in the preview.</p>
+            </section>
+        </aside>
+    </div>
+
+    <script type="module" src="keychain.js"></script>
+</body>
+</html>

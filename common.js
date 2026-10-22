@@ -53,6 +53,22 @@ export function circlePoly(radius, segs = 48) {
     });
 }
 
+// Closed rounded-rectangle outline centered on the origin; hw and hh are half sizes.
+export function roundRectPoly(hw, hh, r, segs = 8) {
+    const corners = [
+        [hw - r, hh - r, 0],
+        [-hw + r, hh - r, Math.PI / 2],
+        [-hw + r, -hh + r, Math.PI],
+        [hw - r, -hh + r, (3 * Math.PI) / 2],
+    ];
+    return corners.flatMap(([cx, cy, a0]) =>
+        Array.from({ length: segs + 1 }, (_, i) => {
+            const a = a0 + ((Math.PI / 2) * i) / segs;
+            return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+        }),
+    );
+}
+
 export function signedArea(pts) {
     let a = 0;
     for (let i = 0; i < pts.length; i++) {

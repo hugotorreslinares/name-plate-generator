@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Garabatop Regalos beaded charm generator</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lobster&family=Pacifico&family=Dancing+Script:wght@700&family=Playfair+Display:wght@700&family=Montserrat:wght@700&family=Poppins:wght@700&family=Oswald:wght@700&display=swap">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+        }
+    }
+    </script>
+    <style type="text/tailwindcss">
+        .btn { @apply inline-flex items-center justify-center gap-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50; }
+        .btn-green { @apply border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600; }
+        .tab { @apply rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100; }
+        .tab-active { @apply bg-blue-500 text-white hover:bg-blue-600; }
+        .section { @apply space-y-3 border-b border-slate-200 py-4; }
+        .section-title { @apply text-xs font-semibold uppercase tracking-wide text-slate-500; }
+        .field-label { @apply flex justify-between text-xs text-slate-600; }
+        .field-value { @apply font-semibold text-blue-600; }
+        .input { @apply w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm; }
+    </style>
+</head>
+<body class="flex h-screen flex-col overflow-hidden bg-slate-100 font-sans text-slate-700">
+    <header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-2">
+        <nav class="flex gap-1">
+            <a href="index.html" class="tab">Name Plate</a>
+            <a href="song-card.html" class="tab">Song Card</a>
+            <a href="keychain.html" class="tab">Keychain</a>
+            <a href="beads.html" class="tab tab-active">Beads</a>
+        </nav>
+        <div class="flex gap-2">
+            <button id="btnZip" class="btn">Pieces (ZIP)</button>
+            <button id="btnStl" class="btn btn-green">↓ Plate STL</button>
+        </div>
+    </header>
+
+    <div class="flex min-h-0 flex-1">
+        <div class="flex min-w-0 flex-1 flex-col">
+            <div class="flex h-1/3 items-center justify-center bg-slate-200 p-4">
+                <canvas id="preview2d" class="h-full max-w-full rounded-md bg-white shadow"></canvas>
+            </div>
+            <div id="canvasArea" class="relative min-h-0 flex-1">
+                <canvas id="canvas" class="absolute inset-0 h-full w-full"></canvas>
+                <div id="loading" class="absolute inset-0 grid place-items-center bg-slate-100/80 text-sm">
+                    <span id="loadingText">Loading 3D engine...</span>
+                </div>
+            </div>
+        </div>
+
+        <aside class="w-80 shrink-0 overflow-y-auto border-l border-slate-200 bg-white px-4">
+            <section class="section">
+                <div class="section-title">Beads on the cord (max 12)</div>
+                <div id="beadRows" class="space-y-2"></div>
+                <button id="btnAddBead" class="btn w-full">+ Add bead</button>
+                <label class="block space-y-1"><span class="field-label">Letter font</span>
+                    <select class="input" data-field="font"></select></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Bead size</div>
+                <label class="block"><span class="field-label">Bead diameter <output class="field-value" data-out="beadD"></output></span>
+                    <input type="range" data-field="beadD" min="10" max="25" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Bead thickness <output class="field-value" data-out="beadT"></output></span>
+                    <input type="range" data-field="beadT" min="2" max="5" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Letter height <output class="field-value" data-out="textH"></output></span>
+                    <input type="range" data-field="textH" min="0.6" max="2.5" step="0.1" class="w-full"></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Cord and ends</div>
+                <label class="block"><span class="field-label">Cord diameter <output class="field-value" data-out="cordD"></output></span>
+                    <input type="range" data-field="cordD" min="2" max="6" step="0.5" class="w-full"></label>
+                <label class="block"><span class="field-label">Fit tolerance <output class="field-value" data-out="tolerance"></output></span>
+                    <input type="range" data-field="tolerance" min="0" max="1" step="0.05" class="w-full"></label>
+                <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" data-field="tips" class="h-4 w-4">
+                    Print cord end tips
+                </label>
+                <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" data-field="ring" class="h-4 w-4">
+                    Print top ring
+                </label>
+                <label class="flex items-center justify-between text-sm">Cord color (preview only)
+                    <input type="color" data-field="cordColor" class="h-8 w-12"></label>
+                <label class="flex items-center justify-between text-sm">Tip color
+                    <input type="color" data-field="tipColor" class="h-8 w-12"></label>
+            </section>
+
+            <section class="section">
+                <div class="section-title">Model Info</div>
+                <div class="flex justify-between text-xs"><span>Pieces</span><span id="statPieces" class="font-semibold text-blue-600">—</span></div>
+                <div class="flex justify-between text-xs"><span>Triangles</span><span id="statTris" class="font-semibold">—</span></div>
+            </section>
+
+            <section class="space-y-2 py-4">
+                <p class="text-center text-xs text-slate-500">Each bead is a separate piece. Thread them on the cord in the order shown above.</p>
+            </section>
+        </aside>
+    </div>
+
+    <script type="module" src="beads.js"></script>
+</body>
+</html>
