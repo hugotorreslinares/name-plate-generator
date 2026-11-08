@@ -5,6 +5,7 @@ import {
     FONTS, bounds, circlePoly, download, loadFont, loadManifold, manifoldToGeometry,
     manifoldVolume, signedArea, stlBlob, textContours,
 } from './common.js';
+import { parseSvgContours } from './svg-text.js';
 
 // Text recess depth as a share of base thickness; the text piece sits in it and rises Text Height above the base.
 const RECESS_RATIO = 0.5;
@@ -26,7 +27,7 @@ const COLOR_PRESETS = [
     { base: '#222222', text: '#f59e0b' },
 ];
 
-const params = { nameText: 'Name', phoneText: '', nfc: false, nfcD: 25, nfcUrl: '', ...PRESETS.classic };
+const params = { nameText: 'Name', phoneText: '', svgContours: null, nfc: false, nfcD: 25, nfcUrl: '', ...PRESETS.classic };
 
 // ===== Scene =====
 const canvasArea = document.getElementById('canvasArea');
@@ -130,17 +131,27 @@ function shapeMaxXAt(hw, hh, cornerR, shape, y) {
 }
 
 // One line per non-empty text: pet name and phone stack when both are set.
+// An uploaded SVG replaces the pet name line.
 function textLines(p) {
-    const texts = [p.nameText, p.phoneText].filter(Boolean);
-    const sizes = texts.length > 1 ? [0.34, 0.2] : [0.45];
-    return texts.map((text, i) => ({ text, size: p.height * (sizes[i] ?? sizes[0]) }));
+    const entries = [
+        { text: p.nameText, svg: p.svgContours },
+        { text: p.phoneText },
+    ].filter(e => e.text || e.svg);
+    const sizes = entries.length > 1 ? [0.34, 0.2] : [0.45];
+    return entries.map((e, i) => ({ ...e, size: p.height * (sizes[i] ?? sizes[0]) }));
+}
+
+function scaleContours(contours, size) {
+    return contours.map(c => c.map(([x, y]) => [x * size, y * size]));
 }
 
 // Centers each line, flips it to plate orientation, stacks the lines and shrinks any line that exceeds the usable width.
 function fitTextContours(p, font) {
     const gap = p.height * 0.04;
     const lines = textLines(p)
-        .map(({ text, size }) => ({ contours: textContours(font, text, size) }))
+        .map(line => ({
+            contours: line.svg ? scaleContours(line.svg, line.size) : textContours(font, line.text, line.size),
+        }))
         .filter(({ contours }) => contours.length);
     if (!lines.length) return null;
 
@@ -603,6 +614,31 @@ for (const el of controlEls) {
 
 document.querySelectorAll('[data-preset]').forEach(btn => {
     btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+});
+
+const svgStatus = document.getElementById('svgStatus');
+
+async function setSvgFile(file) {
+    if (!file) {
+        params.svgContours = null;
+        svgStatus.textContent = 'Using the pet name font.';
+        scheduleRegen();
+        return;
+    }
+    try {
+        params.svgContours = parseSvgContours(await file.text());
+        svgStatus.textContent = `Using ${file.name} as the pet name.`;
+        scheduleRegen();
+    } catch (err) {
+        params.svgContours = null;
+        svgStatus.textContent = err.message;
+    }
+}
+
+document.getElementById('svgInput').addEventListener('change', e => setSvgFile(e.target.files[0]));
+document.getElementById('svgClear').addEventListener('click', () => {
+    document.getElementById('svgInput').value = '';
+    setSvgFile(null);
 });
 
 document.getElementById('btnStl').addEventListener('click', downloadStl);

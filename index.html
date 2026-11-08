@@ -68,6 +68,14 @@
                     <span class="field-label">Pet Name</span>
                     <input class="input" type="text" data-param="nameText" maxlength="30" placeholder="Enter pet name...">
                 </label>
+                <div class="space-y-1">
+                    <span class="field-label">Or upload an SVG for the name</span>
+                    <div class="flex gap-2">
+                        <input id="svgInput" type="file" accept=".svg,image/svg+xml" class="input text-xs">
+                        <button id="svgClear" type="button" class="btn px-2">×</button>
+                    </div>
+                    <p id="svgStatus" class="text-xs text-slate-500">Using the pet name font.</p>
+                </div>
                 <label class="block space-y-1">
                     <span class="field-label">Contact Phone</span>
                     <input class="input" type="text" data-param="phoneText" maxlength="20" placeholder="Optional phone number...">
