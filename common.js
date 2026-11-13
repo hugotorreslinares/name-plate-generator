@@ -186,7 +186,10 @@ const stlExporter = new STLExporter();
 
 export function stlBlob(meshes) {
     const group = new THREE.Group();
+    // Viewers use Y as up, slicers use Z: exports are rotated so the object stands up when printed.
+    group.rotation.x = Math.PI / 2;
     group.add(...meshes.map(m => m.clone()));
+    group.updateMatrixWorld(true);
     return new Blob([stlExporter.parse(group, { binary: true })], { type: 'application/octet-stream' });
 }
 
